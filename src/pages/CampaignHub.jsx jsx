@@ -43,7 +43,7 @@ const CampaignHub = () => {
 
   useEffect(() => { fetchLeads(); }, []);
 
-  // ============ FILTER LEADS ============
+  // Filter leads
   const filteredLeads = useMemo(() => {
     let result = leads;
     if (search) {
@@ -61,7 +61,7 @@ const CampaignHub = () => {
     return result;
   }, [leads, search, statusFilter]);
 
-  // ============ SELECTION FUNCTIONS ============
+  // Selection functions
   const selectAll = () => {
     if (selected.length === filteredLeads.length) {
       setSelected([]);
@@ -83,11 +83,9 @@ const CampaignHub = () => {
   };
 
   const selectSingle = (id) => {
-    // Select only this lead (replace all)
     setSelected([id]);
   };
 
-  // ============ TEMPLATE ============
   const applyTemplate = (key) => {
     const t = templates[key];
     if (t) {
@@ -106,60 +104,95 @@ const CampaignHub = () => {
       .replace(/{{rating}}/g, lead.rating || 'N/A');
   };
 
-  // ============ SEND FUNCTIONS ============
+  // ============ ✅ REAL WHATSAPP - DIRECT CHAT ============
   const sendWhatsApp = (lead) => {
     const phone = lead.phone || lead.whatsapp || '';
     if (!phone) {
-      showToast(`No phone number for ${lead.name}`, 'error');
+      showToast(`❌ No phone number for ${lead.name}`, 'error');
       return;
     }
     const personalizedMsg = personalizeMessage(lead, message);
     const url = `https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(personalizedMsg)}`;
     window.open(url, '_blank');
-    showToast(`Opening WhatsApp for ${lead.name}`);
+    showToast(`📱 Opening WhatsApp for ${lead.name}`);
   };
 
+  // ============ ✅ REAL EMAIL - DIRECT MAILTO ============
   const sendEmail = (lead) => {
     const email = lead.email || '';
     if (!email) {
-      showToast(`No email for ${lead.name}`, 'error');
+      showToast(`❌ No email for ${lead.name}`, 'error');
       return;
     }
     const personalizedMsg = personalizeMessage(lead, message);
-    const personalizedSubject = personalizeMessage(lead, subject);
+    const personalizedSubject = personalizeMessage(lead, subject || 'Message');
     const url = `mailto:${email}?subject=${encodeURIComponent(personalizedSubject)}&body=${encodeURIComponent(personalizedMsg)}`;
     window.open(url, '_blank');
-    showToast(`Opening email for ${lead.name}`);
+    showToast(`📧 Opening email for ${lead.name}`);
   };
 
+  // ============ ✅ REAL SEND TO ALL ============
   const sendToAll = () => {
-    if (!selected.length) { showToast('Select leads first', 'error'); return; }
-    if (!message) { showToast('Enter a message', 'error'); return; }
+    if (!selected.length) { 
+      showToast('⚠️ Select leads first', 'error'); 
+      return; 
+    }
+    if (!message) { 
+      showToast('⚠️ Enter a message', 'error'); 
+      return; 
+    }
 
     const selectedLeads = leads.filter(l => selected.includes(l._id));
     
-    if (selectedLeads.length > 10) {
-      if (!confirm(`Send to ${selectedLeads.length} leads? This will open multiple tabs.`)) return;
+    // Check if any lead has contact info
+    let hasContact = false;
+    if (channel === 'whatsapp') {
+      hasContact = selectedLeads.some(l => l.phone);
+    } else {
+      hasContact = selectedLeads.some(l => l.email);
     }
 
-    if (channel === 'whatsapp') {
-      selectedLeads.forEach((lead, index) => {
-        setTimeout(() => sendWhatsApp(lead), index * 500);
-      });
-      showToast(`Opening WhatsApp for ${selectedLeads.length} leads`);
-    } else {
-      selectedLeads.forEach((lead, index) => {
-        setTimeout(() => sendEmail(lead), index * 500);
-      });
-      showToast(`Opening email for ${selectedLeads.length} leads`);
+    if (!hasContact) {
+      showToast(`❌ No ${channel === 'whatsapp' ? 'phone numbers' : 'emails'} found for selected leads`, 'error');
+      return;
     }
+
+    // Warning for too many tabs
+    if (selectedLeads.length > 10) {
+      if (!confirm(`⚠️ This will open ${selectedLeads.length} tabs. Continue?`)) return;
+    }
+
+    // Open each lead
+    let opened = 0;
+    selectedLeads.forEach((lead, index) => {
+      setTimeout(() => {
+        if (channel === 'whatsapp') {
+          const phone = lead.phone || '';
+          if (phone) {
+            const msg = personalizeMessage(lead, message);
+            window.open(`https://wa.me/${phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+            opened++;
+          }
+        } else {
+          const email = lead.email || '';
+          if (email) {
+            const msg = personalizeMessage(lead, message);
+            const subj = personalizeMessage(lead, subject || 'Message');
+            window.open(`mailto:${email}?subject=${encodeURIComponent(subj)}&body=${encodeURIComponent(msg)}`, '_blank');
+            opened++;
+          }
+        }
+      }, index * 800); // 800ms delay between tabs
+    });
+
+    showToast(`✅ Opening ${channel} for ${opened} leads`);
   };
 
-  // ============ COPY ============
+  // ============ COPY TO CLIPBOARD ============
   const copyToClipboard = (lead) => {
     const personalizedMsg = personalizeMessage(lead, message);
     navigator.clipboard.writeText(personalizedMsg);
-    showToast('Message copied!');
+    showToast('📋 Message copied!');
   };
 
   // ============ EXPORT ============
@@ -181,7 +214,7 @@ const CampaignHub = () => {
     const ws = XLSX.utils.json_to_sheet(data);
     XLSX.utils.book_append_sheet(wb, ws, 'Selected Leads');
     XLSX.writeFile(wb, `selected_leads_${Date.now()}.xlsx`);
-    showToast(`Exported ${selectedLeads.length} leads to Excel`);
+    showToast(`📊 Exported ${selectedLeads.length} leads to Excel`);
   };
 
   const exportCSV = () => {
@@ -199,10 +232,10 @@ const CampaignHub = () => {
     a.href = url;
     a.download = `selected_leads_${Date.now()}.csv`;
     a.click();
-    showToast(`Exported ${selectedLeads.length} leads to CSV`);
+    showToast(`📊 Exported ${selectedLeads.length} leads to CSV`);
   };
 
-  // ============ STATS ============
+  // Stats
   const stats = {
     total: leads.length,
     filtered: filteredLeads.length,
@@ -211,7 +244,6 @@ const CampaignHub = () => {
     qualified: leads.filter(l => l.status === 'qualified').length
   };
 
-  // ============ RENDER ============
   return (
     <div className="p-6 max-w-7xl mx-auto">
       {/* Header */}
@@ -251,7 +283,7 @@ const CampaignHub = () => {
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* ============ LEAD SELECTION ============ */}
+        {/* Lead Selection */}
         <div className="bg-white/5 p-5 rounded-2xl border border-white/10">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-medium">Select Leads</h3>
@@ -342,7 +374,7 @@ const CampaignHub = () => {
                         title="Select only this">
                         <Lucide.Focus size={14} />
                       </button>
-                      {lead.phone && channel === 'whatsapp' && (
+                      {lead.phone && (
                         <button 
                           onClick={(e) => { e.stopPropagation(); sendWhatsApp(lead); }}
                           className="p-1 rounded hover:bg-green-500/20 text-green-400 transition"
@@ -350,7 +382,7 @@ const CampaignHub = () => {
                           <Lucide.MessageCircle size={14} />
                         </button>
                       )}
-                      {lead.email && channel === 'email' && (
+                      {lead.email && (
                         <button 
                           onClick={(e) => { e.stopPropagation(); sendEmail(lead); }}
                           className="p-1 rounded hover:bg-blue-500/20 text-blue-400 transition"
@@ -398,17 +430,12 @@ const CampaignHub = () => {
                   className="px-3 py-1.5 text-xs rounded-lg bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 transition flex items-center gap-1">
                   <Lucide.FileText size={12} /> CSV
                 </button>
-                <button 
-                  onClick={() => { if (confirm('Clear selection?')) selectNone(); }}
-                  className="px-3 py-1.5 text-xs rounded-lg bg-red-500/20 text-red-400 hover:bg-red-500/30 transition flex items-center gap-1">
-                  <Lucide.X size={12} /> Clear
-                </button>
               </div>
             </div>
           )}
         </div>
 
-        {/* ============ COMPOSER ============ */}
+        {/* Composer */}
         <div className="bg-white/5 p-5 rounded-2xl border border-white/10">
           <h3 className="font-medium mb-4">Composer</h3>
           
@@ -491,6 +518,7 @@ const CampaignHub = () => {
                 if (!selected.length) { showToast('Select a lead first', 'error'); return; }
                 if (!message) { showToast('Enter a message', 'error'); return; }
                 const lead = leads.find(l => l._id === selected[0]);
+                if (!lead) return;
                 if (channel === 'whatsapp') sendWhatsApp(lead);
                 else sendEmail(lead);
               }}
@@ -507,7 +535,7 @@ const CampaignHub = () => {
               onClick={() => {
                 if (!selected.length) { showToast('Select a lead first', 'error'); return; }
                 const lead = leads.find(l => l._id === selected[0]);
-                copyToClipboard(lead);
+                if (lead) copyToClipboard(lead);
               }}
               disabled={!selected.length || !message}
               className="py-1.5 rounded-xl bg-white/5 hover:bg-white/10 transition text-xs disabled:opacity-50 flex items-center justify-center gap-1">
@@ -527,9 +555,9 @@ const CampaignHub = () => {
               onClick={() => {
                 const lead = leads.find(l => l._id === selected[0]);
                 if (lead) {
-                  const phone = lead.phone || lead.email;
-                  if (phone) {
-                    navigator.clipboard.writeText(phone);
+                  const contact = lead.phone || lead.email || '';
+                  if (contact) {
+                    navigator.clipboard.writeText(contact);
                     showToast('Contact copied!');
                   }
                 }
@@ -547,6 +575,8 @@ const CampaignHub = () => {
             ) : (
               <>📧 Opens default email client with pre-filled subject & body</>
             )}
+            <br />
+            <span className="text-[10px] text-gray-600">No API calls - Direct chat/email using your own accounts</span>
           </div>
         </div>
       </div>

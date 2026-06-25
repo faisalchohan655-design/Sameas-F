@@ -1,19 +1,13 @@
 import React, { useState, useEffect, createContext, useContext, useMemo } from 'react';
-import { BrowserRouter, Routes, Route, Link, useLocation, useNavigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import axios from 'axios';
 import * as Lucide from 'lucide-react';
 import { motion } from 'framer-motion';
 
-// ============ API ============
+// ============ API (NO AUTH) ============
 const API = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5000/api',
   headers: { 'Content-Type': 'application/json' }
-});
-
-API.interceptors.request.use((config) => {
-  const token = localStorage.getItem('token');
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
 });
 
 // ============ CONTEXT ============
@@ -21,7 +15,6 @@ const AppContext = createContext(null);
 const useApp = () => useContext(AppContext);
 
 const AppProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
   const [leads, setLeads] = useState([]);
   const [loading, setLoading] = useState(false);
   const [stats, setStats] = useState({ total: 0, hot: 0, avgScore: 0 });
@@ -42,58 +35,58 @@ const AppProvider = ({ children }) => {
       const avg = total ? Math.round(res.data.reduce((s, l) => s + (l.aiScore || 0), 0) / total) : 0;
       setStats({ total, hot, avgScore: avg });
     } catch (e) {
-      if (e.response?.status === 401) logout();
+      showToast('Failed to fetch leads', 'error');
     } finally {
       setLoading(false);
     }
   };
 
-  const login = async (email, password) => {
-    const res = await API.post('/auth/login', { email, password });
-    localStorage.setItem('token', res.data.token);
-    setUser(res.data.user);
-    showToast(`Welcome ${res.data.user.name}!`);
-    return res.data.user;
-  };
-
-  const register = async (name, email, password) => {
-    const res = await API.post('/auth/register', { name, email, password });
-    localStorage.setItem('token', res.data.token);
-    setUser(res.data.user);
-    showToast(`Welcome ${res.data.user.name}!`);
-    return res.data.user;
-  };
-
-  const logout = () => {
-    localStorage.removeItem('token');
-    setUser(null);
-    setLeads([]);
-    showToast('Logged out', 'info');
-  };
-
   const bulkSave = async (data) => {
-    const res = await API.post('/leads/bulk', data);
-    await fetchLeads();
-    showToast(`${res.data.length} leads saved`);
-    return res.data;
+    try {
+      const res = await API.post('/leads/bulk', data);
+      await fetchLeads();
+      showToast(`${res.data.length} leads saved`);
+      return res.data;
+    } catch (e) {
+      showToast('Failed to save leads', 'error');
+    }
   };
 
   const bulkDelete = async (ids) => {
-    await API.post('/leads/bulk/delete', { ids });
-    await fetchLeads();
-    showToast(`${ids.length} leads deleted`);
+    try {
+      await API.post('/leads/bulk/delete', { ids });
+      await fetchLeads();
+      showToast(`${ids.length} leads deleted`);
+    } catch (e) {
+      showToast('Failed to delete leads', 'error');
+    }
   };
 
   const deleteLead = async (id) => {
-    await API.delete(`/leads/${id}`);
-    await fetchLeads();
-    showToast('Lead deleted');
+    try {
+      await API.delete(`/leads/${id}`);
+      await fetchLeads();
+      showToast('Lead deleted');
+    } catch (e) {
+      showToast('Failed to delete lead', 'error');
+    }
+  };
+
+  const createLead = async (data) => {
+    try {
+      const res = await API.post('/leads', data);
+      await fetchLeads();
+      showToast('Lead created');
+      return res.data;
+    } catch (e) {
+      showToast('Failed to create lead', 'error');
+    }
   };
 
   return (
     <AppContext.Provider value={{
-      user, leads, loading, stats, toast, showToast, fetchLeads,
-      login, register, logout, bulkSave, bulkDelete, deleteLead
+      leads, loading, stats, toast, showToast, fetchLeads,
+      bulkSave, bulkDelete, deleteLead, createLead
     }}>
       {children}
     </AppContext.Provider>
@@ -114,7 +107,6 @@ const Toast = () => {
 
 const Sidebar = () => {
   const location = useLocation();
-  const { logout, user } = useApp();
   const items = [
     { path: '/', label: 'Dashboard', icon: 'LayoutDashboard' },
     { path: '/lead-finder', label: 'Lead Finder', icon: 'Search' },
@@ -142,24 +134,13 @@ const Sidebar = () => {
           );
         })}
       </nav>
-      {user && (
-        <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between p-3 bg-white/5 rounded-xl">
-          <span className="text-sm text-gray-400">{user.name}</span>
-          <button onClick={logout} className="p-1 hover:text-red-400"><Lucide.LogOut size={18} /></button>
-        </div>
-      )}
     </div>
   );
 };
 
-const ProtectedRoute = ({ children }) => {
-  const { user } = useApp();
-  const navigate = useNavigate();
-  useEffect(() => { if (!user) navigate('/login'); }, [user]);
-  return user ? children : null;
-};
-
 // ============ PAGES ============
+
+// Dashboard Page
 const Dashboard = () => {
   const { leads, loading, stats, fetchLeads, deleteLead, bulkDelete } = useApp();
   const [selected, setSelected] = useState([]);
@@ -264,6 +245,7 @@ const Dashboard = () => {
   );
 };
 
+// Lead Finder Page
 const LeadFinder = () => {
   const { bulkSave, showToast } = useApp();
   const [query, setQuery] = useState('');
@@ -286,9 +268,15 @@ const LeadFinder = () => {
   const saveSelected = async () => {
     if (!selected.length) { showToast('Select leads first', 'error'); return; }
     const toSave = results.filter(r => selected.includes(r._id)).map(r => ({
-      name: r.name, email: `contact@${r.website?.replace(/^https?:\/\//, '').split('/')[0] || 'example.com'}`,
-      phone: r.phone || '', website: r.website || '', location: r.address || location,
-      rating: r.rating || 0, source: 'google_maps', status: 'new', aiScore: 70
+      name: r.name,
+      email: `contact@${r.website?.replace(/^https?:\/\//, '').split('/')[0] || 'example.com'}`,
+      phone: r.phone || '',
+      website: r.website || '',
+      location: r.address || location,
+      rating: r.rating || 0,
+      source: 'google_maps',
+      status: 'new',
+      aiScore: 70
     }));
     await bulkSave(toSave);
     setSelected([]);
@@ -341,6 +329,7 @@ const LeadFinder = () => {
   );
 };
 
+// Campaign Hub Page
 const CampaignHub = () => {
   const { leads, fetchLeads, showToast } = useApp();
   const [selected, setSelected] = useState([]);
@@ -401,6 +390,7 @@ const CampaignHub = () => {
   );
 };
 
+// Email Extractor Page
 const EmailExtractor = () => {
   const { bulkSave, showToast } = useApp();
   const [url, setUrl] = useState('');
@@ -479,75 +469,23 @@ const EmailExtractor = () => {
   );
 };
 
-const Login = () => {
-  const navigate = useNavigate();
-  const { login, register, showToast } = useApp();
-  const [isLogin, setIsLogin] = useState(true);
-  const [name, setName] = useState('');
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-
-  const submit = async (e) => {
-    e.preventDefault();
-    try {
-      if (isLogin) await login(email, password);
-      else await register(name, email, password);
-      navigate('/');
-    } catch (e) { showToast(e.response?.data?.message || 'Error', 'error'); }
-  };
-
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-black">
-      <div className="w-96">
-        <div className="text-center mb-8">
-          <div className="w-16 h-16 mx-auto rounded-2xl bg-gradient-to-r from-purple-500 to-pink-500 flex items-center justify-center">
-            <Lucide.Zap size={30} className="text-white" />
-          </div>
-          <h1 className="text-3xl font-bold text-transparent bg-clip-text bg-gradient-to-r from-purple-500 to-pink-500">LeadAI</h1>
-        </div>
-        <div className="bg-white/5 p-8 rounded-2xl border border-white/10">
-          <div className="flex gap-2 mb-6">
-            <button onClick={() => setIsLogin(true)} className={`flex-1 py-2 rounded-xl text-sm ${isLogin ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' : 'bg-white/5'}`}>Login</button>
-            <button onClick={() => setIsLogin(false)} className={`flex-1 py-2 rounded-xl text-sm ${!isLogin ? 'bg-gradient-to-r from-purple-500 to-pink-500 text-white' : 'bg-white/5'}`}>Register</button>
-          </div>
-          <form onSubmit={submit}>
-            {!isLogin && <input type="text" placeholder="Name" value={name} onChange={(e) => setName(e.target.value)} className="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 mb-3 outline-none" required />}
-            <input type="email" placeholder="Email" value={email} onChange={(e) => setEmail(e.target.value)} className="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 mb-3 outline-none" required />
-            <input type="password" placeholder="Password" value={password} onChange={(e) => setPassword(e.target.value)} className="w-full px-4 py-2 rounded-xl bg-white/5 border border-white/10 mb-3 outline-none" required />
-            <button type="submit" className="w-full py-2 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 text-white font-medium hover:opacity-90">
-              {isLogin ? 'Sign In' : 'Create Account'}
-            </button>
-          </form>
-        </div>
-      </div>
-    </div>
-  );
-};
-
 // ============ MAIN APP ============
 function App() {
   return (
     <AppProvider>
       <BrowserRouter>
         <div className="min-h-screen bg-black text-white">
-          <Routes>
-            <Route path="/login" element={<Login />} />
-            <Route path="/*" element={
-              <ProtectedRoute>
-                <div className="flex min-h-screen">
-                  <Sidebar />
-                  <div className="flex-1 ml-64">
-                    <Routes>
-                      <Route path="/" element={<Dashboard />} />
-                      <Route path="/lead-finder" element={<LeadFinder />} />
-                      <Route path="/campaign-hub" element={<CampaignHub />} />
-                      <Route path="/email-extractor" element={<EmailExtractor />} />
-                    </Routes>
-                  </div>
-                </div>
-              </ProtectedRoute>
-            } />
-          </Routes>
+          <div className="flex min-h-screen">
+            <Sidebar />
+            <div className="flex-1 ml-64">
+              <Routes>
+                <Route path="/" element={<Dashboard />} />
+                <Route path="/lead-finder" element={<LeadFinder />} />
+                <Route path="/campaign-hub" element={<CampaignHub />} />
+                <Route path="/email-extractor" element={<EmailExtractor />} />
+              </Routes>
+            </div>
+          </div>
           <Toast />
         </div>
       </BrowserRouter>
